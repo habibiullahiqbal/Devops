@@ -33,3 +33,43 @@ Successfully received certificate.
 
 
  #          sudo certbot  renew --dry--nginx
+
+
+
+
+
+
+
+
+
+#------------------------------------- DataBase setup---------------------------------
+
+
+mysqldump -h pharma-database.cvo4k8c8woz3.eu-west-2.rds.amazonaws.com -u admin	 -p pharmalyfenew > pharmalyfenew_dump.sql							
+enter database password
+
+#------Create a New Database (pharmalyfeUET) on RDS						
+mysql -h pharma-database.cvo4k8c8woz3.eu-west-2.rds.amazonaws.com -u admin -p
+
+#--------Once connected, create the new database:							
+CREATE DATABASE pharmalyfeUAT;								
+
+#-----------Restore the Dump into the New Database:
+mysql -h pharma-database.cvo4k8c8woz3.eu-west-2.rds.amazonaws.com -u admin -p pharmalyfeUAT < pharmalyfenew_dump.sql	
+
+#----------------------Open database	---------------------------									
+mysql -h pharma-database.cvo4k8c8woz3.eu-west-2.rds.amazonaws.com -u admin -p		show databases;											
+use pharmalyfeUAT;	
+#------------------------Delete data base
+Delete database # 
+drop database pharmalyfeUET;
+
+
+
+
+
+
+
+
+
+
