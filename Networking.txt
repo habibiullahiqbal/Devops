@@ -1,0 +1,93 @@
+    Networking command
+
+1. System Metadata (OS, Kernel, Architecture)
+uname -a           # Full system info (kernel, architecture, etc.)
+cat /etc/os-release  # Linux distribution info (Ubuntu, Debian, etc.)
+hostnamectl        # Hostname + OS + kernel + architecture
+lsb_release -a     # Ubuntu/Debian release info
+
+              2. Hardware Metadata
+lscpu              # CPU details
+lsmem              # Memory block info
+free -h            # Memory usage summary
+lshw -short        # Hardware summary (need sudo)
+lsblk              # Block devices (disks, partitions)
+df -h              # Mounted filesystem info
+ 3. Network Metadata
+ip a               # All network interfaces + IPs
+ip route           # Routing table
+hostname -I        # All IP addresses
+cat /etc/hosts     # Local host mappings
+nmcli device show  # Detailed network info (NetworkManager)
+
+
+🧩 4. Process / Runtime Metadata
+ps aux             # All running processes
+top                # Live process monitor
+env                # Environment variables
+whoami             # Current user
+id                 # UID/GID and groups
+   
+          For AWS EC2:
+    curl -s http://169.254.169.254/latest/meta-data/
+        
+          User & System Metadata
+who                # Logged-in users
+uptime             # How long system has been running
+last               # Login history
+w                  # Logged-in users and what they’re doing
+
+
+networking command
+1) Ifconfig
+            a) ip address
+            b) mac address
+            c) mtu (maximum transmission unit)
+
+2) IP
+
+3) traceroute
+            use for troubleshoot
+
+4) Tracepath
+         it doesnot require root privilage
+
+5)ping  (packet internet grouper)
+         use for check time spend packet send or receive .
+ 
+6) Netstat (network statistics)
+         network related information
+
+7)SS
+         advance version of netstat
+8) Dig
+         Domain information grouper
+         Dns query and troubleshoot related issues.
+
+9) Nslookup  
+           old version of dig
+10) route
+          use for table existing in system
+11) Host    
+          domain name information tell
+12) Arp
+             address resolution protocol
+            ip address or mac address tell information
+13) iwconfig
+             wireless network interface
+             it use to wifi deatail like ssid
+14) hostname  
+            used to view and set hostname of system
+15) curl & wget
+               use for file download in internet through cli              
+
+16)mtr
+               combination to ping and traceroute command. it use to who time spend of sending packet receive and sendbacke.
+17) whois
+           website related information. website properties.
+18) ifplugstatus
+                it check the cable and network interface card properly work.
+19)iftop
+         used to check traffic monitoring.
+20) tcpdump          
+           it is most used command in network analysis.
