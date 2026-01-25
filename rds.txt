@@ -2,11 +2,28 @@ RDS migration and dump commnad
 
 
 
+mysqldump -h <source-rds-endpoint> -P 3306 -u <source_user> -p <database_name> > db_dump.sql
+
+run above command two time with two different databases (pharmalyfe & pharmalyfenew) 
+
+chnage <database_name> and db_dump.sql name according to (pharmalyfe & pharmalyfenew) 
+
+Migrate Backup into 
+mysql -h <target-rds-endpoint> -P 3306 -u <target_user> -p <database_name> < db_dump.sql
+
+run two time change <database_name> and db_dump.sql (file present on current directory)
+
+
+
+
 
 mysqldump -h phramalyfe-new-final-vital.c43l1jyfarcg.eu-west-1.rds.amazonaws.com -P 3306 -u admin -p pharmalyfe > db_dump_pharmalyfe.sql
 
 
 mysqldump -h phramalyfe-new-final-vital.c43l1jyfarcg.eu-west-1.rds.amazonaws.com -P 3306 -u admin -p pharmalyfenew > db_dump_pharmalyfenew.sql
+
+
+
 
 
 
@@ -35,6 +52,8 @@ ls -ld /home/user/backups/
 sudo chown ubuntu:ubuntu /home/user/backups/
 sudo chmod 755 /home/user/backups/
 copy database 
+
+
 scp -i dev-front.pem db_dump_pharmalyfenew.sql ubuntu@18.175.149.60:/home/user/backups/
 
 
@@ -45,8 +64,3 @@ CREATE DATABASE pharmalyfenewprod;
 mysql -h pharma-db-prod.cvo4k8c8woz3.eu-west-2.rds.amazonaws.com -P 3306 -u pharmalyfeadmin -p pharmalyfenewprod < db_dump_pharmalyfenew.sql
 
 
-https://dev-pharmalyfe-assets-pub.s3.eu-west-2.amazonaws.com/assets/category-images/
-
-
-
-https://dev-pharmalyfe-assets-pub .s3.eu-west-2.amazonaws.com/assets/product-images/
