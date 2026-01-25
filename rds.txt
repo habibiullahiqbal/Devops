@@ -13,7 +13,7 @@ mysql -h <target-rds-endpoint> -P 3306 -u <target_user> -p <database_name> < db_
 
 run two time change <database_name> and db_dump.sql (file present on current directory)
 
-
+#----------Dump of pharmalyfe db
 
 
 
@@ -23,9 +23,12 @@ mysqldump -h phramalyfe-new-final-vital.c43l1jyfarcg.eu-west-1.rds.amazonaws.com
 mysqldump -h phramalyfe-new-final-vital.c43l1jyfarcg.eu-west-1.rds.amazonaws.com -P 3306 -u admin -p pharmalyfenew > db_dump_pharmalyfenew.sql
 
 
+#------Dump send  into pharma-db-proud
 
 
 
+mysql -h pharma-db-prod.cvo4k8c8woz3.eu-west-2.rds.amazonaws.com -P 3306 -u pharmalyfeadmin -p
+CREATE DATABASE pharmalyfenewprod;
 
 mysql -h pharma-db-prod.cvo4k8c8woz3.eu-west-2.rds.amazonaws.com -P 3306 -u pharmalyfeadmin -p pharmalyfenewprod < db_dump_pharmalyfenew.sql
 
@@ -37,13 +40,15 @@ mysql -h pharma-db-prod.cvo4k8c8woz3.eu-west-2.rds.amazonaws.com -P 3306 -u admi
 
 pharmalyfeadminvst
 
-
+it work in ec2 instance wich
 
 scp db_dump_pharmalyfenew.sql "dev-front.pem" ubuntu@18.175.149.60:/home/user/backups/
 
+if donot work then check in ec2 instance whch file may or me not be 
 
 ssh -i "dev-front.pem" ubuntu@ec2-18-175-149-60.eu-west-2.compute.amazonaws.com
 
+if not file in ec2 which then make file
 
 login in ec2 instance 
 ssh -i dev-front.pem ubuntu@18.175.149.60
@@ -51,6 +56,7 @@ mkdir -p /home/user/backups/
 ls -ld /home/user/backups/
 sudo chown ubuntu:ubuntu /home/user/backups/
 sudo chmod 755 /home/user/backups/
+cd /home/user/backups/
 copy database 
 
 
@@ -58,8 +64,7 @@ scp -i dev-front.pem db_dump_pharmalyfenew.sql ubuntu@18.175.149.60:/home/user/b
 
 
 
-mysql -h pharma-db-prod.cvo4k8c8woz3.eu-west-2.rds.amazonaws.com -P 3306 -u pharmalyfeadmin -p
-CREATE DATABASE pharmalyfenewprod;
+
 
 mysql -h pharma-db-prod.cvo4k8c8woz3.eu-west-2.rds.amazonaws.com -P 3306 -u pharmalyfeadmin -p pharmalyfenewprod < db_dump_pharmalyfenew.sql
 
