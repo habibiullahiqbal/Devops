@@ -1,1 +1,106 @@
+# script for lunch template
+
+
+# #!/bin/bash
+# set -euo pipefail
+
+# exec > >(tee /var/log/user-data.log) 2>&1
+# echo "=== [$(date)] Deployment Started ==="
+
+# AWS_REGION="eu-central-1"
+# APP_DIR="/opt/ai-smarty"
+# ECR="674154711815.dkr.ecr.eu-central-1.amazonaws.com"
+# DB_HOST_FIXED="postgresdb-1-instance-1.chase6ggonkk.eu-central-1.rds.amazonaws.com"
+
+# TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+#   -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+
+# INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+#   http://169.254.169.254/latest/meta-data/instance-id)
+
+# if [ -n "$INSTANCE_ID" ]; then
+#   aws ec2 create-tags \
+#     --region "$AWS_REGION" \
+#     --resources "$INSTANCE_ID" \
+#     --tags Key=Name,Value="ai-smarty-production-v11"
+# fi
+
+# if docker compose version >/dev/null 2>&1; then
+#   DOCKER_CMD="docker compose"
+# else
+#   DOCKER_CMD="docker-compose"
+# fi
+
+# mkdir -p "$APP_DIR"
+# cd "$APP_DIR"
+
+# echo "Logging into ECR..."
+# aws ecr get-login-password --region "$AWS_REGION" | \
+#   docker login --username AWS --password-stdin "$ECR"
+
+# echo "Fetching backend envs from Parameter Store..."
+# aws ssm get-parameters-by-path \
+#   --region "$AWS_REGION" \
+#   --path "/backend/" \
+#   --with-decryption \
+#   --query "Parameters[*].[Name,Value]" \
+#   --output text \
+#   | awk -F'\t' '{gsub(".*/","",$1); print $1"="$2}' > "$APP_DIR/backend.env"
+
+# get_env_value() {
+#   grep -m1 "^$1=" "$APP_DIR/backend.env" | cut -d '=' -f2- | tr -d '\r'
+# }
+
+# DATABASE_USER="$(get_env_value DATABASE_USER)"
+# DATABASE_PASS="$(get_env_value DATABASE_PASS)"
+# DATABASE_PORT="$(get_env_value DATABASE_PORT)"
+# DATABASE_NAME="$(get_env_value DATABASE_NAME)"
+
+# FULL_URL="postgresql://${DATABASE_USER}:${DATABASE_PASS}@${DB_HOST_FIXED}:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=require&uselibpqcompat=true&schema=public"
+
+# sed -i '/^DATABASE_URL=/d' "$APP_DIR/backend.env"
+# printf 'DATABASE_URL=%s\n' "$FULL_URL" >> "$APP_DIR/backend.env"
+
+# cat <<EOF > docker-compose.yml
+# services:
+#   backend:
+#     image: ${ECR}/prod-backend:latest
+#     container_name: ai-smarty-backend
+#     restart: always
+#     env_file:
+#       - backend.env
+#     ports:
+#       - "3001:3001"
+
+#   frontend:
+#     image: ${ECR}/prod-frontend:latest
+#     container_name: ai-smarty-frontend
+#     restart: always
+#     ports:
+#       - "80:80"
+# EOF
+
+# echo "Pulling latest images..."
+# $DOCKER_CMD pull
+
+# echo "Starting containers..."
+# $DOCKER_CMD up -d --force-recreate --remove-orphans
+
+# echo "Waiting for backend..."
+# sleep 30
+
+# echo "Running Prisma setup..."
+# docker exec ai-smarty-backend npx prisma generate
+# docker exec ai-smarty-backend npx prisma migrate deploy || echo "Migration failed, check backend logs"
+
+# echo "Restarting backend..."
+# docker restart ai-smarty-backend
+
+# echo "Final backend env check..."
+# docker exec ai-smarty-backend printenv | grep DATABASE_URL || true
+
+# echo "=== [$(date)] Deployment Successful ==="
+
+
+
 
