@@ -1,106 +1,211 @@
-# script for lunch template
+#frontend 
+name: production
 
+# on:
+#   push:
+#     branches: [main]
 
-# #!/bin/bash
-# set -euo pipefail
+# permissions:
+#   contents: read
+#   id-token: write
 
-# exec > >(tee /var/log/user-data.log) 2>&1
-# echo "=== [$(date)] Deployment Started ==="
+# jobs:
+#   build-and-push:
+#     name: Build and Push Docker Image to ECR
+#     runs-on: ubuntu-latest
+#     environment: prod
 
-# AWS_REGION="eu-central-1"
-# APP_DIR="/opt/ai-smarty"
-# ECR="674154711815.dkr.ecr.eu-central-1.amazonaws.com"
-# DB_HOST_FIXED="postgresdb-1-instance-1.chase6ggonkk.eu-central-1.rds.amazonaws.com"
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
 
-# TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-#   -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+#       - name: Configure AWS credentials
+#         uses: aws-actions/configure-aws-credentials@v4
+#         with:
+#           audience: sts.amazonaws.com
+#           role-to-assume: ${{ secrets.PROD_OIDC_ROLE_ARN }}
+#           aws-region: ${{ secrets.AWS_REGION }}
 
-# INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
-#   http://169.254.169.254/latest/meta-data/instance-id)
+#       - name: Login to Amazon ECR
+#         id: login-ecr
+#         uses: aws-actions/amazon-ecr-login@v2
 
-# if [ -n "$INSTANCE_ID" ]; then
-#   aws ec2 create-tags \
-#     --region "$AWS_REGION" \
-#     --resources "$INSTANCE_ID" \
-#     --tags Key=Name,Value="ai-smarty-production-v11"
-# fi
+#       - name: Build and Push Frontend
+#         run: |
+#           docker build \
+#             --build-arg VITE_API_URL="${{ secrets.VITE_API_URL }}" \
+#             --build-arg VITE_APP_ENV="${{ secrets.VITE_APP_ENV }}" \
+#             --build-arg VITE_ENABLE_ANALYTICS="${{ secrets.VITE_ENABLE_ANALYTICS }}" \
+#             -t ${{ secrets.FRONTEND_ECR_URL }}:latest .
+#           docker push ${{ secrets.FRONTEND_ECR_URL }}:latest
 
-# if docker compose version >/dev/null 2>&1; then
-#   DOCKER_CMD="docker compose"
-# else
-#   DOCKER_CMD="docker-compose"
-# fi
+#   continuous-deployment:
+#     name: Blue Green Deployment
+#     runs-on: ubuntu-latest
+#     environment: prod
+#     needs: build-and-push
 
-# mkdir -p "$APP_DIR"
-# cd "$APP_DIR"
+#     steps:
+#       - name: Configure AWS credentials
+#         uses: aws-actions/configure-aws-credentials@v4
+#         with:
+#           audience: sts.amazonaws.com
+#           role-to-assume: ${{ secrets.PROD_OIDC_ROLE_ARN }}
+#           aws-region: ${{ secrets.AWS_REGION }}
 
-# echo "Logging into ECR..."
-# aws ecr get-login-password --region "$AWS_REGION" | \
-#   docker login --username AWS --password-stdin "$ECR"
+#       - name: Start hard instance refresh
+#         id: refresh
+#         run: |
+#           REFRESH_ID=$(aws autoscaling start-instance-refresh \
+#             --auto-scaling-group-name "${{ secrets.PROD_ASG_NAME }}" \
+#             --strategy Rolling \
+#             --preferences '{
+#               "MinHealthyPercentage": 75,
+#               "MaxHealthyPercentage": 100,
+#               "InstanceWarmup": 300,
+#               "SkipMatching": false
+#             }' \
+#             --query 'InstanceRefreshId' \
+#             --output text)
 
-# echo "Fetching backend envs from Parameter Store..."
-# aws ssm get-parameters-by-path \
-#   --region "$AWS_REGION" \
-#   --path "/backend/" \
-#   --with-decryption \
-#   --query "Parameters[*].[Name,Value]" \
-#   --output text \
-#   | awk -F'\t' '{gsub(".*/","",$1); print $1"="$2}' > "$APP_DIR/backend.env"
+#           echo "REFRESH_ID=$REFRESH_ID" >> $GITHUB_ENV
+#           echo "Started refresh: $REFRESH_ID"
 
-# get_env_value() {
-#   grep -m1 "^$1=" "$APP_DIR/backend.env" | cut -d '=' -f2- | tr -d '\r'
-# }
+#       - name: Wait for refresh to complete
+#         run: |
+#           while true; do
+#             STATUS=$(aws autoscaling describe-instance-refreshes \
+#               --auto-scaling-group-name "${{ secrets.PROD_ASG_NAME }}" \
+#               --instance-refresh-ids "$REFRESH_ID" \
+#               --query 'InstanceRefreshes[0].Status' \
+#               --output text)
 
-# DATABASE_USER="$(get_env_value DATABASE_USER)"
-# DATABASE_PASS="$(get_env_value DATABASE_PASS)"
-# DATABASE_PORT="$(get_env_value DATABASE_PORT)"
-# DATABASE_NAME="$(get_env_value DATABASE_NAME)"
+#             echo "Current status: $STATUS"
 
-# FULL_URL="postgresql://${DATABASE_USER}:${DATABASE_PASS}@${DB_HOST_FIXED}:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=require&uselibpqcompat=true&schema=public"
+#             if [ "$STATUS" = "Successful" ]; then
+#               echo "Instance refresh completed successfully"
+#               exit 0
+#             fi
 
-# sed -i '/^DATABASE_URL=/d' "$APP_DIR/backend.env"
-# printf 'DATABASE_URL=%s\n' "$FULL_URL" >> "$APP_DIR/backend.env"
+#             if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+#               echo "Instance refresh failed"
+#               exit 1
+#             fi
 
-# cat <<EOF > docker-compose.yml
-# services:
-#   backend:
-#     image: ${ECR}/prod-backend:latest
-#     container_name: ai-smarty-backend
-#     restart: always
-#     env_file:
-#       - backend.env
-#     ports:
-#       - "3001:3001"
-
-#   frontend:
-#     image: ${ECR}/prod-frontend:latest
-#     container_name: ai-smarty-frontend
-#     restart: always
-#     ports:
-#       - "80:80"
-# EOF
-
-# echo "Pulling latest images..."
-# $DOCKER_CMD pull
-
-# echo "Starting containers..."
-# $DOCKER_CMD up -d --force-recreate --remove-orphans
-
-# echo "Waiting for backend..."
-# sleep 30
-
-# echo "Running Prisma setup..."
-# docker exec ai-smarty-backend npx prisma generate
-# docker exec ai-smarty-backend npx prisma migrate deploy || echo "Migration failed, check backend logs"
-
-# echo "Restarting backend..."
-# docker restart ai-smarty-backend
-
-# echo "Final backend env check..."
-# docker exec ai-smarty-backend printenv | grep DATABASE_URL || true
-
-# echo "=== [$(date)] Deployment Successful ==="
+#             sleep 30
+#           done
 
 
 
 
+#-----------backend---------------
+
+name: CI Build and Push to ECR
+
+# on:
+#   push:
+#     branches: ["main"]
+#   workflow_dispatch:
+
+# env:
+#   AWS_REGION: eu-central-1
+#   ECR_REPO: prod-backend
+#   IMAGE_TAG: latest
+
+# jobs:
+#   build_push:
+#     name: Build and Push Docker Image to ECR
+#     runs-on: ubuntu-latest
+
+#     permissions:
+#       id-token: write
+#       contents: read
+
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+
+#       - name: Cleanup Old Docker Images
+#         run: docker image prune -af
+
+#       - name: Configure AWS credentials
+#         uses: aws-actions/configure-aws-credentials@v4
+#         with:
+#           aws-region: ${{ env.AWS_REGION }}
+#           role-to-assume: ${{ secrets.AWS_ROLE_ARN_CI }}
+#           role-session-name: GitHubActionsOIDCRole
+
+#       - name: Login to ECR
+#         id: ecr
+#         uses: aws-actions/amazon-ecr-login@v2
+
+#       - name: Build image
+#         run: |
+#           docker build -t $ECR_REPO:$IMAGE_TAG .
+
+#       - name: Tag image
+#         run: |
+#           docker tag $ECR_REPO:$IMAGE_TAG ${{ steps.ecr.outputs.registry }}/${ECR_REPO}:$IMAGE_TAG
+
+#       - name: Push image
+#         run: |
+#           docker push ${{ steps.ecr.outputs.registry }}/${ECR_REPO}:$IMAGE_TAG
+
+#   continuous_deployment:
+#     name: Hard Refresh Auto Scaling Group
+#     runs-on: ubuntu-latest
+#     needs: build_push
+
+#     permissions:
+#       id-token: write
+#       contents: read
+
+#     steps:
+#       - name: Configure AWS credentials
+#         uses: aws-actions/configure-aws-credentials@v4
+#         with:
+#           aws-region: ${{ env.AWS_REGION }}
+#           role-to-assume: ${{ secrets.AWS_ROLE_ARN_CI }}
+#           role-session-name: GitHubActionsOIDCRole
+
+#       - name: Start hard instance refresh
+#         id: refresh
+#         run: |
+#           REFRESH_ID=$(aws autoscaling start-instance-refresh \
+#             --auto-scaling-group-name "${{ secrets.PROD_ASG_NAME }}" \
+#             --strategy Rolling \
+#             --preferences '{
+#               "MinHealthyPercentage": 75,
+#               "MaxHealthyPercentage": 100,
+#               "InstanceWarmup": 300,
+#               "SkipMatching": false
+#             }' \
+#             --query 'InstanceRefreshId' \
+#             --output text)
+
+#           echo "REFRESH_ID=$REFRESH_ID" >> $GITHUB_ENV
+#           echo "Started refresh: $REFRESH_ID"
+
+#       - name: Wait for refresh to complete
+#         run: |
+#           while true; do
+#             STATUS=$(aws autoscaling describe-instance-refreshes \
+#               --auto-scaling-group-name "${{ secrets.PROD_ASG_NAME }}" \
+#               --instance-refresh-ids "$REFRESH_ID" \
+#               --query 'InstanceRefreshes[0].Status' \
+#               --output text)
+
+#             echo "Current status: $STATUS"
+
+#             if [ "$STATUS" = "Successful" ]; then
+#               echo "Instance refresh completed successfully"
+#               exit 0
+#             fi
+
+#             if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+#               echo "Instance refresh failed"
+#               exit 1
+#             fi
+
+#             sleep 30
+#           done
