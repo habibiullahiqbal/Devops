@@ -100,56 +100,47 @@ name: production
 
 #-----------backend---------------
 
-name: CI Build and Push to ECR
+# name: Production backend deployment
 
 # on:
 #   push:
-#     branches: ["main"]
-#   workflow_dispatch:
+#     branches: [main]
 
-# env:
-#   AWS_REGION: eu-central-1
-#   ECR_REPO: prod-backend
-#   IMAGE_TAG: latest
+# permissions:
+#     id-token: write
+#     contents: read
 
 # jobs:
-#   build_push:
-#     name: Build and Push Docker Image to ECR
+#   build-and-push:
+#     name: Build and push Docker Image to ECR
 #     runs-on: ubuntu-latest
-
-#     permissions:
-#       id-token: write
-#       contents: read
+#     environment: production
 
 #     steps:
-#       - name: Checkout code
+#       - name: checkout code
 #         uses: actions/checkout@v4
-
-#       - name: Cleanup Old Docker Images
-#         run: docker image prune -af
-
+  
 #       - name: Configure AWS credentials
 #         uses: aws-actions/configure-aws-credentials@v4
 #         with:
-#           aws-region: ${{ env.AWS_REGION }}
-#           role-to-assume: ${{ secrets.AWS_ROLE_ARN_CI }}
-#           role-session-name: GitHubActionsOIDCRole
+#           audience: sts.amazonaws.com
+#           role-to-assume: ${{ secrets.PROD_OIDC_ROLE_ARN }}
+#           aws-region: ${{ secrets.AWS_REGION }}
 
-#       - name: Login to ECR
-#         id: ecr
+#       - name: Login to Amazon ECR
+#         id: login-ecr
 #         uses: aws-actions/amazon-ecr-login@v2
 
 #       - name: Build image
 #         run: |
-#           docker build -t $ECR_REPO:$IMAGE_TAG .
+#           docker build -t prod-backend .
 
 #       - name: Tag image
 #         run: |
-#           docker tag $ECR_REPO:$IMAGE_TAG ${{ steps.ecr.outputs.registry }}/${ECR_REPO}:$IMAGE_TAG
-
+#           docker tag ${{ secrets.PROD_BACKEND_ECR_REPOSITORY }}:latest ${{ secrets.PROD_BACKEND_ECR_URL }}:latest
 #       - name: Push image
 #         run: |
-#           docker push ${{ steps.ecr.outputs.registry }}/${ECR_REPO}:$IMAGE_TAG
+#           docker push ${{ secrets.PROD_BACKEND_ECR_URL }}:latest
 
 #   continuous_deployment:
 #     name: Hard Refresh Auto Scaling Group
