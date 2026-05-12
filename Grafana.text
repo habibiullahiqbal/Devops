@@ -1,0 +1,462 @@
+Grafan 
+Ec2 server which install docker docker compose
+# sudo apt update
+# sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+# sudo systemctl enable --now docker
+# sudo docker volume create grafana-storage
+# sudo docker run -d   --name grafana   --restart unless-stopped   -p 3000:3000   -v grafana-storage:/var/lib/grafana   grafana/grafana-oss:latest
+
+
+Loki and Prometheus setup script
+Server which make file setup-monitoring-docker-run.sh
+
+#!/bin/bash
+set -e
+
+MON_DIR="/opt/monitoring"
+
+echo "Creating monitoring directory..."
+sudo mkdir -p "$MON_DIR"
+cd "$MON_DIR"
+
+echo "Creating Docker networks..."
+sudo docker network inspect monitoring-net >/dev/null 2>&1 || sudo docker network create monitoring-net
+sudo docker network inspect nestjs-network >/dev/null 2>&1 || sudo docker network create nestjs-network
+
+echo "Removing old monitoring containers only..."
+for c in loki promtail prometheus node-exporter cadvisor postgres-exporter redis-exporter; do
+  sudo docker rm -f "$c" >/dev/null 2>&1 || true
+done
+
+echo "Creating Loki config..."
+sudo tee loki-config.yaml > /dev/null <<'LOKI'
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  replication_factor: 1
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  ring:
+    instance_addr: 127.0.0.1
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 168h
+  allow_structured_metadata: false
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+LOKI
+
+echo "Creating Promtail config..."
+sudo tee promtail-config.yaml > /dev/null <<'PROMTAIL'
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/promtail-positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: container
+
+      - source_labels: ['__meta_docker_container_id']
+        target_label: __path__
+        replacement: /var/lib/docker/containers/$1/$1-json.log
+
+    pipeline_stages:
+      - docker: {}
+PROMTAIL
+
+echo "Creating Prometheus config..."
+sudo tee prometheus.yml > /dev/null <<'PROMETHEUS'
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['prometheus:9090']
+
+  - job_name: loki
+    static_configs:
+      - targets: ['loki:3100']
+
+  - job_name: ec2-system
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  - job_name: docker-containers
+    static_configs:
+      - targets: ['cadvisor:8080']
+
+  - job_name: postgres
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  - job_name: redis
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  - job_name: nestjs-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['nestjs-app:3001']
+PROMETHEUS
+
+echo "Creating Docker volumes..."
+sudo docker volume create loki-data >/dev/null
+sudo docker volume create prometheus-data >/dev/null
+
+echo "Starting Loki..."
+sudo docker run -d \
+  --name loki \
+  --restart unless-stopped \
+  --network monitoring-net \
+  -p 3100:3100 \
+  -v "$MON_DIR/loki-config.yaml:/etc/loki/loki-config.yaml:ro" \
+  -v loki-data:/loki \
+  grafana/loki:latest \
+  -config.file=/etc/loki/loki-config.yaml
+
+echo "Starting Promtail..."
+sudo docker run -d \
+  --name promtail \
+  --restart unless-stopped \
+  --network monitoring-net \
+  -v "$MON_DIR/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro" \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v /var/lib/docker/containers:/var/lib/docker/containers:ro \
+  grafana/promtail:latest \
+  -config.file=/etc/promtail/promtail-config.yaml
+
+echo "Starting Node Exporter..."
+sudo docker run -d \
+  --name node-exporter \
+  --restart unless-stopped \
+  --network monitoring-net \
+  --pid host \
+  -v /proc:/host/proc:ro \
+  -v /sys:/host/sys:ro \
+  -v /:/rootfs:ro \
+  prom/node-exporter:latest \
+  --path.procfs=/host/proc \
+  --path.sysfs=/host/sys \
+  --path.rootfs=/rootfs \
+  --collector.filesystem.mount-points-exclude='^/(sys|proc|dev|host|etc)($$|/)'
+
+echo "Starting cAdvisor..."
+sudo docker run -d \
+  --name cadvisor \
+  --restart unless-stopped \
+  --network monitoring-net \
+  --privileged \
+  -v /:/rootfs:ro \
+  -v /var/run:/var/run:ro \
+  -v /sys:/sys:ro \
+  -v /var/lib/docker/:/var/lib/docker:ro \
+  -v /dev/disk/:/dev/disk:ro \
+  gcr.io/cadvisor/cadvisor:latest
+
+echo "Starting Postgres Exporter..."
+sudo docker run -d \
+  --name postgres-exporter \
+  --restart unless-stopped \
+  --network monitoring-net \
+  -e DATA_SOURCE_NAME="postgresql://postgres:master123@nestjs-postgres:5432/postgres?sslmode=disable" \
+  prometheuscommunity/postgres-exporter:latest
+
+sudo docker network connect nestjs-network postgres-exporter || true
+
+echo "Starting Redis Exporter..."
+sudo docker run -d \
+  --name redis-exporter \
+  --restart unless-stopped \
+  --network monitoring-net \
+  -e REDIS_ADDR="redis://nestjs-redis:6379" \
+  oliver006/redis_exporter:latest
+
+sudo docker network connect nestjs-network redis-exporter || true
+
+echo "Starting Prometheus..."
+sudo docker run -d \
+  --name prometheus \
+  --restart unless-stopped \
+  --network monitoring-net \
+  -p 9090:9090 \
+  -v "$MON_DIR/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+  -v prometheus-data:/prometheus \
+  prom/prometheus:latest \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=/prometheus \
+  --storage.tsdb.retention.time=7d \
+  --web.enable-lifecycle
+
+sudo docker network connect nestjs-network prometheus || true
+
+echo "Waiting for services..."
+sleep 15
+
+echo "Checking containers..."
+sudo docker ps
+
+echo "Checking Loki..."
+curl -s http://localhost:3100/ready || true
+echo ""
+
+echo "Checking Prometheus..."
+curl -s http://localhost:9090/-/ready || true
+echo ""
+
+echo "Monitoring setup completed."
+echo "Prometheus URL: http://SERVER_PRIVATE_IP:9090"
+echo "Loki URL: http://SERVER_PRIVATE_IP:3100"
+
+# after script run grafana dashboard set
+Server which make 
+Mkdir /opt/monitoring
+Make files
+docker-compose.yml  loki-config.yaml  prometheus.yml  promtail-config.yaml
+
+docker-compose.yml
+
+services:
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/loki
+    networks:
+      - monitoring-net
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    volumes:
+      - ./promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - monitoring-net
+    depends_on:
+      - loki
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - monitoring-net
+      - nestjs-network
+    depends_on:
+      - node-exporter
+      - cadvisor
+      - postgres-exporter
+      - redis-exporter
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: unless-stopped
+    pid: host
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - monitoring-net
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - monitoring-net
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:master123@nestjs-postgres:5432/postgres?sslmode=disable"
+    networks:
+      - monitoring-net
+      - nestjs-network
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: "redis://nestjs-redis:6379"
+    networks:
+      - monitoring-net
+      - nestjs-network
+
+networks:
+  monitoring-net:
+    driver: bridge
+  nestjs-network:
+    external: true
+
+volumes:
+  loki_data:
+  prometheus_data:
+
+loki-config.yaml
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  replication_factor: 1
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  ring:
+    instance_addr: 127.0.0.1
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 168h
+  allow_structured_metadata: false
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+
+prometheus.yml 
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['prometheus:9090']
+
+  - job_name: loki
+    static_configs:
+      - targets: ['loki:3100']
+
+  - job_name: ec2-system
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  - job_name: docker-containers
+    static_configs:
+      - targets: ['cadvisor:8080']
+
+  - job_name: postgres
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  - job_name: redis
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+promtail-config.yaml 
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/promtail-positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: container
+
+      - source_labels: ['__meta_docker_container_id']
+        target_label: __path__
+        replacement: /var/lib/docker/containers/$1/$1-json.log
+
+    pipeline_stages:
+      - docker: {}
+
